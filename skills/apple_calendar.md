@@ -79,17 +79,16 @@ a field may be stale; re-run if results look inconsistent.
 
 ## CLI
 
-Single-file stdlib CLI (sqlite3 + zoneinfo only); no venv needed, run with
-system `python3`:
+Package in `src/apple_calendar/` with a thin executable launcher `scripts/apple-calendar` (stdlib only: sqlite3 + zoneinfo; no venv needed, run with system `python3` from checkout, or via the `apple-calendar` console script if installed):
 
 ```bash
-python3 apple_calendar.py calendars
-python3 apple_calendar.py list --start 2026-10-01 --end 2026-10-31 [--calendar <title>]
-python3 apple_calendar.py search --text iphone
-python3 apple_calendar.py search --text renewal --field description
-python3 apple_calendar.py get --uuid <uuid>
-python3 apple_calendar.py get --rowid 1133
-python3 apple_calendar.py selftest
+python3 scripts/apple-calendar calendars
+python3 scripts/apple-calendar list --start 2026-10-01 --end 2026-10-31 [--calendar <title>]
+python3 scripts/apple-calendar search --text iphone
+python3 scripts/apple-calendar search --text renewal --field description
+python3 scripts/apple-calendar get --uuid <uuid>
+python3 scripts/apple-calendar get --rowid 1133
+python3 scripts/apple-calendar selftest
 ```
 
 - `list` `--start` / `--end` bounds are local calendar dates (default: today
