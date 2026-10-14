@@ -1,0 +1,10 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+state/
+data/
+logs/
+*.sqlitedb
+*.sqlitedb-wal
+*.sqlitedb-shm
