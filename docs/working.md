@@ -30,6 +30,24 @@ applied:
 - Unified error handling and exit codes; snapshot retry on a torn copy; a
   stderr warning when the machine's IANA zone cannot be resolved.
 
+### 2026-10-13 — Scaffold restructure + offline tests
+
+- Restructured to the standard scaffold layout: `src/apple_calendar/` package
+  (`timeutil.py`, `store.py`, `cli.py`), `scripts/apple-calendar` thin
+  launcher, `pyproject.toml` (hatchling) with the `apple-calendar` console
+  script, `.env.example`, root-level `apple_calendar.py` removed.
+- Store discovery is overridable via the `APPLE_CALENDAR_STORE_DIR` env var
+  so tests can point at a synthetic fixture store.
+- 31 offline pytest tests against the synthetic store (reference-epoch
+  conversions, wall-clock conversion, DST window behavior, list
+  date-vs-instant window with regression cases, search/get/calendar filter,
+  selftest green and failure-injection cases, launcher exit codes and clean
+  error surface). No live store access.
+- Minimal GitHub Actions CI (ubuntu, uv, pytest).
+- Root-owned files inside the user's uv interpreter cache (written by a root
+  uv run on ~Oct 7) broke `uv pip install`; cleaned via sudo after user
+  confirmation, temporary `UV_CACHE_DIR` workaround removed.
+
 ## Lessons learned
 
 - `start_date` / `end_date` are absolute seconds since the NSDate reference
