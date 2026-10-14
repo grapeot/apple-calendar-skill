@@ -1,17 +1,6 @@
-#!/usr/bin/env python3
-"""apple_calendar — read-only query CLI for the macOS Apple Calendar store.
+"""Read-only query CLI for the macOS Apple Calendar store.
 
-Reads a read-only snapshot of Calendar.sqlitedb (the EventKit store) and
-prints JSON. Read-only by construction: the live database is never opened
-and no mutation path (AppleScript/EventKit/SQL write) exists in this tool.
-
-Time semantics (critical):
-  start_date / end_date are ABSOLUTE instants: seconds since
-  2001-01-01 00:00:00 UTC (the NSDate reference). They are NOT wall-clock
-  values. start_tz / end_tz hold the event's ORIGINAL timezone, used only to
-  render wall-clock time. All-day events: all_day=1, tz column is '_float',
-  stored at UTC midnight of the event date.
-  Never interpret start_date as a wall-clock time in start_tz.
+Commands print JSON. Exit codes: 0 success, 1 error, 2 usage.
 """
 from __future__ import annotations
 
@@ -22,138 +11,29 @@ import os
 import shutil
 import sqlite3
 import sys
-import tempfile
 from zoneinfo import ZoneInfo
 
-DB_NAME = "Calendar.sqlitedb"
-STORE_DIRS = [
-    os.path.expanduser(
-        "~/Library/Group Containers/group.com.apple.calendar"
-    ),
-]
-# ~/Library/Calendars/Calendar.sqlitedb is a 0-byte decoy on current macOS.
-
-REF_UTC = dt.datetime(2001, 1, 1, tzinfo=dt.timezone.utc)
-
-# 2001-01-01T00:00:00Z expressed in 1970-unix seconds; used to hand sqlite a
-# real unix timestamp for date()/strftime() on stored reference-date values.
-EPOCH_OFFSET_1970 = 978307200
-
-BASE_COLS = (
-    "ci.ROWID, ci.UUID, ci.summary, ci.start_date, ci.start_tz, "
-    "ci.end_date, ci.end_tz, ci.all_day, ci.description, "
-    "ci.has_recurrences, ci.last_modified, c.title"
+from .store import (
+    BASE_COLS,
+    BASE_FROM,
+    STORE_DIR_ENV,
+    CalendarError,
+    open_store,
+    row_to_event,
+    using_default_store,
 )
-BASE_FROM = "FROM CalendarItem ci JOIN Calendar c ON ci.calendar_id = c.ROWID"
-
-
-class CalendarError(RuntimeError):
-    pass
+from .timeutil import (
+    EPOCH_OFFSET_1970,
+    local_date_to_utc_seconds,
+    local_tz,
+    secs_to_utc,
+    wall_iso,
+)
 
 
 def fail(msg: str) -> None:
     print(f"apple_calendar: {msg}", file=sys.stderr)
     sys.exit(1)
-
-
-def find_db() -> str:
-    for d in STORE_DIRS:
-        p = os.path.join(d, DB_NAME)
-        if os.path.isfile(p) and os.path.getsize(p) > 0:
-            return p
-    raise CalendarError(
-        "Calendar.sqlitedb not found in: " + ", ".join(STORE_DIRS)
-    )
-
-
-def snapshot(db_path: str) -> str:
-    """Copy main db + WAL sidecars to a temp dir, preserving file names."""
-    tmp = tempfile.mkdtemp(prefix="apple_calendar_")
-    for suffix in ("", "-wal", "-shm"):
-        src = db_path + suffix
-        if os.path.isfile(src):
-            shutil.copy2(src, os.path.join(tmp, DB_NAME + suffix))
-    return tmp
-
-
-def open_snapshot(tmp_dir: str) -> sqlite3.Connection:
-    path = os.path.join(tmp_dir, DB_NAME)
-    if not os.path.isfile(path):
-        raise CalendarError("snapshot missing main db; store may be empty")
-    return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-
-
-def secs_to_utc(ts) -> dt.datetime | None:
-    if ts is None:
-        return None
-    return REF_UTC + dt.timedelta(seconds=float(ts))
-
-
-def utc_iso(ts) -> str | None:
-    d = secs_to_utc(ts)
-    return d.strftime("%Y-%m-%dT%H:%M:%SZ") if d is not None else None
-
-
-def wall_iso(ts, tz_name) -> str | None:
-    d = secs_to_utc(ts)
-    if d is None or not tz_name or tz_name in ("_float", "float"):
-        return None
-    try:
-        zi = ZoneInfo(tz_name)
-    except Exception:
-        return None
-    return d.astimezone(zi).isoformat()
-
-
-def row_to_event(r) -> dict:
-    (rowid, uuid, summary, sd, stz, ed, etz, all_day, desc,
-     has_rec, last_mod, cal) = r
-    return {
-        "rowid": rowid,
-        "uuid": uuid,
-        "summary": summary,
-        "calendar": cal,
-        "all_day": bool(all_day),
-        "start_utc": utc_iso(sd),
-        "end_utc": utc_iso(ed),
-        "start_local": wall_iso(sd, stz),
-        "end_local": wall_iso(ed, etz),
-        "timezone": stz if stz and stz not in ("_float", "float") else "float",
-        "description": desc,
-        "has_recurrences": bool(has_rec),
-        "last_modified_utc": utc_iso(last_mod),
-    }
-
-
-def local_tz() -> dt.tzinfo:
-    """The machine's IANA zone (DST-correct for any target date).
-
-    `datetime.now().astimezone().tzinfo` returns the CURRENT fixed offset,
-    which misplaces events by 1h in list windows that cross DST.
-    """
-    try:
-        link = os.path.realpath("/etc/localtime")
-        marker = "/zoneinfo/"
-        i = link.rfind(marker)
-        if i != -1:
-            return ZoneInfo(link[i + len(marker):])
-    except Exception:
-        pass
-    print(
-        "apple_calendar: warning: cannot resolve the machine's IANA zone from "
-        "/etc/localtime; falling back to the current fixed UTC offset, so "
-        "list windows crossing DST may be off by 1h",
-        file=sys.stderr,
-    )
-    return dt.datetime.now().astimezone().tzinfo
-
-
-def local_date_to_utc_seconds(date_str: str, end_of_day: bool) -> float:
-    d = dt.date.fromisoformat(date_str)
-    tz = local_tz()
-    hh, mm, ss = (23, 59, 59) if end_of_day else (0, 0, 0)
-    wall = dt.datetime(d.year, d.month, d.day, hh, mm, ss, tzinfo=tz)
-    return (wall - REF_UTC).total_seconds()
 
 
 def emit(payload: dict, db_path: str) -> None:
@@ -261,11 +141,16 @@ def cmd_selftest(args, con, db_path) -> None:
     def add(name: str, ok: bool, detail: str = "") -> None:
         checks.append({"check": name, "ok": bool(ok), "detail": detail})
 
-    add(
-        "store_is_group_container",
-        "/Group Containers/group.com.apple.calendar/" in db_path,
-        db_path,
-    )
+    if using_default_store():
+        add(
+            "store_is_group_container",
+            "/Group Containers/group.com.apple.calendar/" in db_path,
+            db_path,
+        )
+    else:
+        add("store_is_group_container", True,
+            f"override store ({STORE_DIR_ENV} set); identity check relaxed")
+
     size = os.path.getsize(db_path)
     add("store_not_decoy", size > 0, f"{size} bytes")
 
@@ -327,22 +212,7 @@ def cmd_selftest(args, con, db_path) -> None:
         sys.exit(1)
 
 
-def open_store():
-    """Snapshot + open. Retry once: the three-file copy is not atomic, so a
-    concurrent WAL checkpoint can tear the snapshot."""
-    db_path = find_db()
-    last: Exception | None = None
-    for _ in range(2):
-        tmp = snapshot(db_path)
-        try:
-            return db_path, tmp, open_snapshot(tmp)
-        except sqlite3.Error as e:
-            last = e
-            shutil.rmtree(tmp, ignore_errors=True)
-    raise last  # type: ignore[misc]
-
-
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="apple_calendar",
         description="Read-only queries against the macOS Apple Calendar store.",
@@ -379,7 +249,12 @@ def main() -> None:
     )
     sp.set_defaults(fn=cmd_selftest)
 
-    args = p.parse_args()
+    return p
+
+
+def main(argv: list[str] | None = None) -> None:
+    p = build_parser()
+    args = p.parse_args(argv)
 
     try:
         db_path, tmp, con = open_store()
@@ -393,6 +268,8 @@ def main() -> None:
     finally:
         con.close()
         shutil.rmtree(tmp, ignore_errors=True)
+
+    sys.exit(0)
 
 
 if __name__ == "__main__":

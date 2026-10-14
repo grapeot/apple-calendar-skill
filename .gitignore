@@ -1,10 +1,21 @@
 .DS_Store
+.env
+.env.*
+!.env.example
 __pycache__/
 *.py[cod]
-.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
 state/
 data/
 logs/
+# This tool's entire job is the local calendar store — never let one of the
+# store files (or a snapshot of it) be committed.
 *.sqlitedb
 *.sqlitedb-wal
 *.sqlitedb-shm
